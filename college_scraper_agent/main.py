@@ -228,5 +228,15 @@ def main():
 # =========================================================
 # Start
 # =========================================================
+# Expose Flask `app` for platforms (like Vercel) that expect a top-level
+# WSGI/Flask application variable named `app` in `main.py`.
+try:
+    # Import the Flask app if available. Keep it optional so CLI usage still works.
+    from ui.flask_app import app  # type: ignore
+except Exception:
+    # If import fails, don't override CLI behavior; `app` will simply be absent.
+    app = None  # type: ignore
+
+
 if __name__ == "__main__":
     main()

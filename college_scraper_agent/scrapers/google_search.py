@@ -7,8 +7,10 @@ import os
 import time
 import requests
 from pathlib import Path
+from requests.adapters import HTTPAdapter
 from typing import List
 from urllib.parse import parse_qs, quote_plus, urlparse
+from urllib3.util.retry import Retry
 
 from utils.logger import log_scraping, log_warning, log_info
 
@@ -25,8 +27,29 @@ except ImportError:
 
 SERPAPI_KEY = os.getenv("SERPAPI_KEY", "")
 REQUEST_DELAY = float(os.getenv("REQUEST_DELAY", "2"))
+REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "20"))
 if not SERPAPI_KEY:
     log_info("No SERPAPI_KEY configured — using direct search fallbacks (Google/DuckDuckGo).")
+
+
+def requests_retry_session(
+    retries: int = 3,
+    backoff_factor: float = 0.5,
+    status_forcelist: tuple = (429, 500, 502, 503, 504),
+) -> requests.Session:
+    session = requests.Session()
+    retry = Retry(
+        total=retries,
+        read=retries,
+        connect=retries,
+        backoff_factor=backoff_factor,
+        status_forcelist=status_forcelist,
+        allowed_methods=frozenset(["GET", "POST"]),
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
 
 
 def search_colleges_serpapi(query: str, num_results: int = 10) -> List[str]:
@@ -138,32 +161,45 @@ def search_colleges_duckduckgo(query: str, num_results: int = 10) -> List[str]:
         "Referer": "https://duckduckgo.com/",
     }
     encoded = quote_plus(query)
-    url = f"https://html.duckduckgo.com/html/?q={encoded}"
+    urls_to_try = [
+        f"https://html.duckduckgo.com/html/?q={encoded}",
+        f"https://duckduckgo.com/html/?q={encoded}",
+    ]
+    session = requests_retry_session()
+    links = []
+    last_exception = None
 
-    try:
-        resp = requests.get(url, headers=headers, timeout=20)
-        soup = BeautifulSoup(resp.text, "lxml")
-        links = []
+    for url in urls_to_try:
+        try:
+            resp = session.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "lxml")
 
-        for a in soup.select("a.result__a"):
-            href = a.get("href", "")
-            real = ""
-            if href.startswith("//duckduckgo.com/l/"):
-                parsed = urlparse("https:" + href)
-                params = parse_qs(parsed.query)
-                real = params.get("uddg", [""])[0]
-            elif href.startswith("http"):
-                real = href
+            for a in soup.select("a.result__a"):
+                href = a.get("href", "")
+                real = ""
+                if href.startswith("//duckduckgo.com/l/"):
+                    parsed = urlparse("https:" + href)
+                    params = parse_qs(parsed.query)
+                    real = params.get("uddg", [""])[0]
+                elif href.startswith("http"):
+                    real = href
 
-            if real and real.startswith("http") and "duckduckgo.com" not in real:
-                links.append(real)
-                if len(links) >= num_results:
-                    break
+                if real and real.startswith("http") and "duckduckgo.com" not in real:
+                    links.append(real)
+                    if len(links) >= num_results:
+                        break
 
-        return links
-    except Exception as e:
-        log_warning(f"DuckDuckGo scrape error: {e}")
-        return []
+            if links:
+                return links
+        except Exception as e:
+            last_exception = e
+            log_warning(f"DuckDuckGo scrape error on {url}: {e}")
+            continue
+
+    if last_exception:
+        log_warning(f"DuckDuckGo final failure: {last_exception}")
+    return []
 
 
 def build_college_queries(city: str = "", state: str = "",
