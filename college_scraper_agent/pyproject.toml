@@ -1,0 +1,4 @@
+[tool.vercel]
+entrypoint = "ui.flask_app:app"
+
+# Optional: you can also set a build command or Python runtime here if needed.
