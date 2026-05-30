@@ -1,0 +1,12 @@
+[tool.vercel]
+entrypoint = "college_scraper_agent.ui.flask_app:app"
+
+[project]
+name = "scraping-root"
+version = "0.0.1"
+description = "Top-level pyproject for Vercel deployment"
+dependencies = ["flask>=2.0"]
+
+[build-system]
+requires = ["hatchling>=1.0"]
+build-backend = "hatchling.build"
